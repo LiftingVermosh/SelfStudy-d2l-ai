@@ -67,3 +67,23 @@ for epoch in range(num_epochs):
 # Print learned parameters / 打印学习到的参数
 print(f'learned w: {w}, true w: {true_w},error w: {true_w - w}') 
 print(f'learned b: {b}, true b: {true_b},error b: {true_b - b}')
+
+# 分别绘制两个特征的散点图和回归线
+plt.figure(figsize=(12, 5))
+
+# 第一个特征
+plt.subplot(1, 2, 1)
+plt.scatter(features[:, 0].numpy(), labels.numpy(), 1)
+x = torch.linspace(features[:, 0].min(), features[:, 0].max(), 100)
+plt.plot(x.numpy(), (true_w[0] * x + true_b).numpy(), 'r-')
+plt.title(f'Feature 1: True w={true_w[0]:.2f}, Learned w={w[0]:.2f}')
+
+# 第二个特征
+plt.subplot(1, 2, 2)
+plt.scatter(features[:, 1].numpy(), labels.numpy(), 1)
+x = torch.linspace(features[:, 1].min(), features[:, 1].max(), 100)
+plt.plot(x.numpy(), (true_w[1] * x + true_b).numpy(), 'r-')
+plt.title(f'Feature 2: True w={true_w[1]:.2f}, Learned w={w[1]:.2f}')
+
+plt.tight_layout()
+plt.show()
