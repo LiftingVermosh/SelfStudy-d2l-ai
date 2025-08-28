@@ -94,10 +94,10 @@ class MySequential(nn.Module):
 回到问题本身：如果将 MySequential 中存储块的方式更改为 Python 列表，会出现什么样的问题？
 
 - 参数无法被追踪：model.parameters() 将无法自动找到列表中的模块所包含的参数。此时我们必须手动编写代码去遍历列表并收集每个元素的参数，非常麻烦且容易出错。
-- 无法正确保存和加载模型：model.state_dict() 将无法生成一个结构化的、带有有意义名称的状态字典。你可能只会得到一个庞大且无命名的一维参数列表，几乎无法用于后续的模型加载和微调。
+- 无法正确保存和加载模型：model.state_dict() 将无法生成一个结构化的、带有有意义名称的状态字典。我们可能只会得到一个庞大且无命名的一维参数列表，几乎无法用于后续的模型加载和微调。
 - 无法移动到设备：model.to('cuda') 将失效，因为它无法找到列表中子模块的参数并将其移动到GPU上。
-- 无法按名称访问和修改：你将失去通过字符串名字(如 print(model[0].net[1]))来访问、修改、甚至剪枝特定子模块的能力。调试和模型手术会变得异常困难。
-- 破坏PyTorch的整个模块生态系统：nn.Sequential 本身也是一个 nn.Module。如果它内部的子模块不被注册，那么当你把 nn.Sequential 实例作为另一个大模块(如 NestMLP)的子模块时，这个 nn.Sequential 本身又成为了一个“黑盒”，它内部的参数又无法被它的父模块追踪到。这将导致整个模块化的设计彻底崩塌。
+- 无法按名称访问和修改：我们将失去通过字符串名字(如 print(model[0].net[1]))来访问、修改、甚至剪枝特定子模块的能力。调试和模型手术会变得异常困难。
+- 破坏PyTorch的整个模块生态系统：nn.Sequential 本身也是一个 nn.Module。如果它内部的子模块不被注册，那么当我们把 nn.Sequential 实例作为另一个大模块(如 NestMLP)的子模块时，这个 nn.Sequential 本身又成为了一个“黑盒”，它内部的参数又无法被它的父模块追踪到。这将导致整个模块化的设计彻底崩塌。
   
 插句题外话：大量字典运行时的效率如何？
 
@@ -561,3 +561,182 @@ class FourierCoefficientLayer(nn.Module):
         fourier_coeffs = torch.fft.rfft(x, dim=1, norm=self.norm)
         return fourier_coeffs
 ```
+
+## 5.5 读写文件
+
+### 5.5.1 加载和保存张量
+
+这一部分主要介绍的是如何在训练过程中加载和储存权重向量或模型
+
+#### 保存张量
+
+单格张量可以使用 `save` 方法保存到文件中，例如：
+
+```python
+# 定义张量
+x = torch.tensor([1, 2, 3])
+
+# 保存张量
+torch.save(x, 'tensor.pt')
+```
+
+类似的，使用 `torch.load` 方法可以将保存的张量读回
+
+```python
+# 读取张量
+x = torch.load('tensor.pt')
+```
+
+函数支持字典形式的保存方法，例如：
+
+```python
+# 定义字典
+my_dict = {'a': 1, 'b': 2, 'c': 3}
+
+# 保存字典
+torch.save(my_dict,'my_dict.pt')
+
+# 读取字典
+my_dict = torch.load('my_dict.pt')
+```
+
+#### 保存模型
+
+模型的保存和读取可以分为两步：
+
+1. 保存模型参数
+
+```python
+# 定义模型
+model = MyNet()
+
+# 保存模型参数
+torch.save(model.state_dict(),'model.param')
+
+# 读取模型参数
+model.load_state_dict(torch.load('model.param'))
+```
+
+2. 保存整个模型
+
+```python
+# 定义模型
+model = MyNet()
+
+# 保存整个模型
+torch.save(model, 'whole_model.pt')
+
+# 读取整个模型
+model = torch.load('whole_model.pt')
+```
+
+### Exercises 5.5
+
+#### 即使不需要将经过训练的模型部署到不同的设备上，存储模型参数还有什么实际的好处？
+
+- 检查点与恢复训练 (Checkpointing)
+    这是最重要的好处之一。深度学习模型训练通常耗时很长（几小时、几天甚至几周）。如果训练过程中遇到断电、系统崩溃、程序错误或被其他进程抢占资源而中断，没有保存的模型状态将全部丢失。定期保存检查点可以让我们从最近的一个保存点恢复训练，而不是从零开始，节省大量时间和计算资源。
+- 模型选择与集成 (Model Selection & Ensemble)
+    在训练过程中，验证集上的性能最佳点（best validation performance）不一定出现在最后的训练 epoch。通过定期保存，我们可以在训练结束后回头评估所有检查点，选择性能最好的那个模型版本，而不是默认使用最终版本。我们还可以将多个检查点的预测结果进行集成，往往能获得比单一模型更好的性能。
+- 分析与调试 (Analysis & Debugging)
+    保存的模型允许我们事后对训练过程进行深入分析。例如，我们可以比较不同训练阶段的模型在特定样本上的表现，诊断模型是何时、如何学习到某些特征的，这对于理解和调试模型行为至关重要。
+- 重现性与报告 (Reproducibility & Reporting)
+    科学研究的基石是可重现性。保存最终用于出结果的模型参数，可以确保我们和其他人日后能完全复现出论文或报告中的实验结果。我们可能会训练多个模型，保存它们可以让我们在不同的数据集上测试同一个模型的泛化能力。
+- 作为新任务的预训练权重 (Transfer Learning)
+    即使新任务与原始任务不同，现在训练好的模型（尤其是其底层特征提取层）也可以作为新模型的预训练权重。这通常能显著加快新模型的收敛速度并提升其性能。
+
+#### 假设你只想复用网络的一部分，以将其合并到不同的网络架构中。比如想在一个新的网络中使用之前网络的前两层，该怎么做？
+
+其实很简单，保存所有参数然后针对性调用即可，具体而言
+
+```python
+torch.save(original_model.state_dict(), 'original_model_params.pth')
+
+# ========== 分界线 ==========
+
+class NewNetwork(nn.Module):
+    def __init__(self):
+        super(NewNetwork, self).__init__()
+        # 假设前两层的名字是 'layer1' 和 'layer2'
+        self.layer1 = nn.Linear(...) # 结构必须与原始模型对应层完全相同
+        self.layer2 = nn.Conv2d(...) # 结构必须与原始模型对应层完全相同
+        self.new_fc = nn.Linear(...) # 新的、需要从头训练的层
+
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.new_fc(x)
+        return x
+
+new_model = NewNetwork()
+
+# 加载原始模型参数
+# 加载原始模型的完整状态字典
+original_state_dict = torch.load('original_model_params.pth')
+
+# 获取新模型当前的状态字典
+new_state_dict = new_model.state_dict()
+
+# 遍历原始状态字典，只将我们需要的层的参数复制到新状态字典中
+# 假设我们只想复制 'layer1' 和 'layer2' 的参数
+for name, param in original_state_dict.items():
+    if name in ['layer1.weight', 'layer1.bias', 'layer2.weight', 'layer2.bias']:
+        # 将原始参数复制到新状态字典的对应位置
+        new_state_dict[name] = param
+
+# 将更新后的状态字典加载到新模型中
+new_model.load_state_dict(new_state_dict)
+
+# 现在，new_model 的 layer1 和 layer2 已经拥有了训练好的权重
+```
+
+如果命名更规范化，在新模型前两层命名与原始模型一致，那么可以有更简洁的实现：
+
+```python
+new_model = NewNetwork()
+# 加载参数
+pretrained_dict = torch.load('original_model_params.pth')
+# 获取新模型的结构定义
+model_dict = new_model.state_dict()
+
+# 过滤掉预训练字典中不需要的键
+# 同时过滤掉新模型字典中不存在的键
+pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict and 'fc' not in k} # 排除掉全连接层
+
+# 用预训练参数更新新模型的字典
+model_dict.update(pretrained_dict)
+# 加载回新模型
+new_model.load_state_dict(model_dict)
+```
+
+#### 如何同时保存网络架构和参数？需要对架构加上什么限制？
+
+保存整个模型即可：
+
+```python
+# 保存整个模型（架构 + 参数）
+torch.save(model, 'complete_model.pth')
+
+# 加载整个模型
+model = torch.load('complete_model.pth')
+# 加载后可以直接使用，无需先实例化模型类
+output = model(input_data)
+```
+以下来源deepseek：
+
+>  
+> **架构上有哪些限制？**
+> 这种方法非常方便，但有其局限性，主要与 Python 的序列化机制（pickle）有关：
+>
+> 必须能够找到类定义：pickle 并不保存类的代码，它只保存了类的路径名。在加载时，Python 必须能在这个路径上找到完全相同的类。这意味着：
+>   - 你必须在加载脚本中导入定义该模型的确切类。
+>   - 不能使用匿名模型（如 model = nn.Sequential(...) 然后直接保存，虽然技术上可以，但不利于维护和重现）。
+>   - 类的名称和所在模块必须可用。
+>
+> 代码版本控制：如果你的模型类定义后来被修改了（例如，改变了前向传播逻辑），加载旧的保存文件可能会出错或产生意想不到的行为。因此，将模型定义代码与训练脚本一起用 Git 等工具进行版本控制是最佳实践。
+>
+> 可移植性：由于它依赖于特定的 Python 环境和项目结构，这种保存方式在不同项目间迁移时不如只保存 state_dict 灵活。
+>
+> 结论与推荐：
+>   - 通常推荐只保存 state_dict()。这是一种更安全、更灵活的方式。它将架构（代码）和参数（数据）分离，符合软件工程的最佳实践。你需要自己维护和版本控制架构代码。
+在快速原型、调试或部署到已知的、固定的环境时，保存整个模型可能更方便，因为你不需要在加载脚本中重新实例化模型。
