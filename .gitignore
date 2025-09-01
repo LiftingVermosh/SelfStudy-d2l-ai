@@ -1,0 +1,13 @@
+*.*
+
+!.gitignore
+!README.md
+!LICENSE
+
+!*.py
+
+!Calculation of Deep Learing/**
+!Convolutional Neural Networks/**
+!Linear Regression/**
+!Softmax
+!Mulitlayer Perceptron/**
