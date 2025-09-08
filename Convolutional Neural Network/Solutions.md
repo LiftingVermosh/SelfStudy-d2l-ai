@@ -310,3 +310,126 @@ Stride（步幅）大于 1 的操作在效果上是一种“稀疏采样”或�
 #### 步幅大于1的计算优势是什么？
 
 见上一问题，意义在普适问题上其实差不多，细化方面会有些许区别
+
+## 6.4 多通道和批量处理
+
+### Exercises 6.4
+
+#### 假设我们有两个卷积核，大小分别为 $k_1$ 和 $k_2$ （中间没有非线性激活函数）。
+1. 证明运算可以用单次卷积来表示。
+  在CNN中，卷积是一种线性操作。连续应用两个卷积核（无非线性激活函数）相当于一个单一的卷积操作。数学上，设第一个卷积核为 $W_1$（形状为 $[C_{\text{mid}}, C_{\text{in}}, k_1, k_1]$），第二个卷积核为 $W_2$（形状为 $[C_{\text{out}}, C_{\text{mid}}, k_2, k_2]$）。对输入 $X$ 先应用 $W_1$ 得到中间输出 $Y = \text{conv}(X, W_1)$，再应用 $W_2$ 得到最终输出 $Z = \text{conv}(Y, W_2)$。
+  由于卷积的线性性质，有：
+  $$Z = \text{conv}(\text{conv}(X, W_1), W_2) = \text{conv}(X, W_{\text{combined}})$$
+  其中 $W_{\text{combined}}$ 是等效的单个卷积核，通过对 $W_1$ 和 $W_2$ 在空间维度上进行卷积得到。具体地，对于每个输出通道 $c_{\text{out}}$ 和输入通道 $c_{\text{in}}$，等效核的元素是 $W_2$ 与 $W_1$ 的卷积结果：
+  $$W_{\text{combined}}[c_{\text{out}}, c_{\text{in}}, :, :] = \sum_{m=1}^{C_{\text{mid}}} \text{conv}(W_2[c_{\text{out}}, m, :, :], W_1[m, c_{\text{in}}, :, :])$$
+  这里，$\text{conv}$ 表示二维卷积操作（无填充，步长1）。因此，整个运算可以被单次卷积表示。
+
+2. 这个等效的单个卷积核的维数是多少呢？
+  等效卷积核 $W_{\text{combined}}$ 的维数（形状）取决于原始核的大小和通道数。空间尺寸上，如果两个核的大小分别为 $k_1 \times k_1$ 和 $k_2 \times k_2$，则等效核的空间大小为 $k_{\text{combined}} \times k_{\text{combined}}$，其中 $k_{\text{combined}} = k_1 + k_2 - 1$（这是卷积操作中输出尺寸的计算公式，假设无填充和步长1）。
+  在通道维度上：
+
+  输入通道数：$C_{\text{in}}$
+  输出通道数：$C_{\text{out}}$
+  因此，等效核的形状为 $[C_{\text{out}}, C_{\text{in}}, k_{\text{combined}}, k_{\text{combined}}]$
+
+  例如，如果 $k_1 = 3$, $k_2 = 3$, $C_{\text{in}} = 1$, $C_{\text{mid}} = 2$, $C_{\text{out}} = 1$，则等效核的大小为 $5 \times 5$（因为 $3 + 3 - 1 = 5$），形状为 $[1, 1, 5, 5]$。
+
+3. 反之亦然吗？
+  反之不亦然。并非所有卷积核都能被精确分解为两个较小核的卷积。这是因为卷积核的分解相当于求解一个线性系统，其可行性取决于核的秩和结构。例如，如果一个卷积核的大小为 $k \times k$，它可能无法被分解为两个核大小为 $k_1 \times k_1$ 和 $k_2 \times k_2$ 的乘积（其中 $k_1 + k_2 - 1 = k$），除非核满足特定条件（如可分离性）。
+
+#### 假设输入形状为 $c_i \times h \times w$，卷积核是形状为 $c_o \times c_i \times k_h \times k_w$，填充为 $(p_h, p_w)$，步幅为 $(s_h, s_w)$。
+
+**1. 前向传播的计算成本（乘法和加法）是多少？**
+  前向传播涉及卷积操作，每个输出元素的计算需要与卷积核窗口进行点积。计算成本以乘法和加法次数衡量。
+  乘法次数：每个输出元素需要 $c_i \times k_h \times k_w$ 次乘法（因为每个输入通道和每个核元素相乘）。总乘法次数为：
+  $$\text{Multiplications} = c_o \times h_o \times w_o \times c_i \times k_h \times k_w$$
+  加法次数：每个输出元素需要 $c_i \times k_h \times k_w - 1$ 次加法（用于累加乘积）。总加法次数为：
+  $$\text{Additions} = c_o \times h_o \times w_o \times (c_i \times k_h \times k_w - 1)$$
+  注意：在实际实现中，加法可能被优化，但这是理论值。总乘加操作数（MAC）为 $c_o \times h_o \times w_o \times c_i \times k_h \times k_w$，常用于衡量计算复杂度。
+**2. 内存占用是多少？**
+  - 输入激活值：$c_i \times h \times w$ 元素
+  - 输出激活值：$c_o \times h_o \times w_o$ 元素
+  - 权重参数：$c_o \times c_i \times k_h \times k_w$ 元素
+  总内存占用为：
+  $$\text{Memory}_{\text{forward}} = c_i \times h \times w + c_o \times h_o \times w_o + c_o \times c_i \times k_h \times k_w$$
+  在训练时，这些值需要存储用于反向传播。  
+**3. 反向传播的内存占用是多少？**
+  反向传播需要存储前向传播的激活值、梯度值以及参数。峰值内存占用包括：
+  存储的前向激活值：输入激活值（$c_i \times h \times w$）和输出激活值（$c_o \times h_o \times w_o$）
+  梯度值：输出梯度（来自上一层，大小 $c_o \times h_o \times w_o$）、输入梯度（计算后传递下一层，大小 $c_i \times h \times w$）、权重梯度（计算后用于更新，大小 $c_o \times c_i \times k_h \times k_w$）
+  权重参数：$c_o \times c_i \times k_h \times k_w$（已存储）
+  总内存占用约为：
+  $$\text{Memory}_{\text{backward}} = 2 \times (c_i \times h \times w) + 2 \times (c_o \times h_o \times w_o) + 2 \times (c_o \times c_i \times k_h \times k_w)$$
+  这表示大约两倍的激活值和两倍的参数内存。实际占用可能因实现优化而略有不同。
+**4. 反向传播的计算成本是多少？**
+  反向传播包括计算权重梯度和输入梯度，计算成本类似前向传播但操作数更高。
+  权重梯度计算：
+  乘法次数：每个权重元素需要 $h_o \times w_o$ 次乘法（与输出梯度相乘）。总乘法次数为：
+  $$\text{Multiplications}_{\text{weight grad}} = c_o \times c_i \times k_h \times k_w \times h_o \times w_o$$
+  加法次数：每个权重元素需要 $h_o \times w_o - 1$ 次加法（求和）。总加法次数为：
+  $$\text{Additions}_{\text{weight grad}} = c_o \times c_i \times k_h \times k_w \times (h_o \times w_o - 1)$$
+  输入梯度计算：
+  乘法次数：每个输入元素需要 $c_o \times k_h \times k_w$ 次乘法（与权重相乘）。总乘法次数为：
+  $$\text{Multiplications}_{\text{input grad}} = c_i \times h \times w \times c_o \times k_h \times k_w$$
+  加法次数：每个输入元素需要 $c_o \times k_h \times k_w - 1$ 次加法（求和）。总加法次数为：
+  $$\text{Additions}_{\text{input grad}} = c_i \times h \times w \times (c_o \times k_h \times k_w - 1)$$
+  总反向传播计算成本：
+  总乘法次数：
+  $$\text{Total Multiplications} = c_o \times c_i \times k_h \times k_w \times h_o \times w_o + c_i \times h \times w \times c_o \times k_h \times k_w$$
+  注意：由于 $c_o \times h_o \times w_o \times c_i \times k_h \times k_w = c_i \times h \times w \times c_o \times k_h \times k_w$（因为输出尺寸与输入尺寸相关），但通常简化表示为 $2 \times c_o \times h_o \times w_o \times c_i \times k_h \times k_w$，但精确值如上。
+  总加法次数：
+  $$\text{Total Additions} = c_o \times c_i \times k_h \times k_w \times (h_o \times w_o - 1) + c_i \times h \times w \times (c_o \times k_h \times k_w - 1)$$
+
+#### 如果我们将输入通道c i 和输出通道c o 的数量加倍，计算数量会增加多少？如果我们把填充数量翻一番会怎么样？
+
+计算成本主要以乘加操作数（MAC）衡量，基于前向传播的公式：
+$$\text{Computations} = c_o \times h_o \times w_o \times c_i \times k_h \times k_w$$
+其中，输出尺寸 $h_o$ 和 $w_o$ 取决于输入尺寸、卷积核尺寸、填充和步幅：
+$$h_o = \left\lfloor \frac{h + 2p_h - k_h}{s_h} \right\rfloor + 1, \quad w_o = \left\lfloor \frac{w + 2p_w - k_w}{s_w} \right\rfloor + 1$$
+
+如果将输入通道 $c_i$ 和输出通道 $c_o$ 的数量加倍，计算数量会增加多少？
+
+- 原始计算成本：
+$$\text{Computations}_{\text{original}} = c_o \times h_o \times w_o \times c_i \times k_h \times k_w$$
+
+新参数：将 $c_i$ 和 $c_o$ 加倍后，新输入通道为 $2c_i$，新输出通道为 $2c_o$。输出尺寸 $h_o$ 和 $w_o$ 不变，因为它们与通道数无关。
+新计算成本：
+$$\text{Computations}_{\text{new}} = (2c_o) \times h_o \times w_o \times (2c_i) \times k_h \times k_w = 4 \times c_o \times h_o \times w_o \times c_i \times k_h \times k_w$$
+
+增加比例：计算数量增加为原来的4倍（即增加300%）。这是因为通道数加倍在计算成本中具有乘积效应。
+
+- 如果把填充数量翻一番会怎么样？
+填充数量翻一番意味着新填充为 $(2p_h, 2p_w)$。这会影响输出尺寸 $h_o$ 和 $w_o$，从而影响计算成本。
+
+原始输出尺寸：
+$$h_o = \left\lfloor \frac{h + 2p_h - k_h}{s_h} \right\rfloor + 1, \quad w_o = \left\lfloor \frac{w + 2p_w - k_w}{s_w} \right\rfloor + 1$$
+
+新输出尺寸：
+$$h_o' = \left\lfloor \frac{h + 4p_h - k_h}{s_h} \right\rfloor + 1, \quad w_o' = \left\lfloor \frac{w + 4p_w - k_w}{s_w} \right\rfloor + 1$$
+
+新计算成本：
+$$\text{Computations}_{\text{new}} = c_o \times h_o' \times w_o' \times c_i \times k_h \times k_w$$
+
+增加比例：计算数量的增加取决于 $h_o'$ 和 $w_o'$ 相对于 $h_o$ 和 $w_o$ 的变化。具体比例无法一概而论，因为它受输入尺寸 $h, w$、卷积核尺寸 $k_h, k_w$、步幅 $s_h, s_w$ 的影响。但通常，填充增加会使输出尺寸增大，从而增加计算成本。
+
+示例假设：如果步幅 $s_h = s_w = 1$，且输入尺寸较大，则 $h_o' \approx h_o + 2p_h$ 和 $w_o' \approx w_o + 2p_w$（近似）。因此，计算成本增加比例约为 $\frac{(h_o + 2p_h)(w_o + 2p_w)}{h_o w_o}$。
+一般情况：填充翻倍会使输出尺寸增加，但增加幅度非线性。实际中，填充翻倍通常会导致计算成本增加，但具体倍数需要根据参数计算。
+
+#### 如果卷积核的高度和宽度是 $k_h = k_w = 1$，前向传播的计算复杂度是多少？
+
+一般卷积层的前向传播计算复杂度（以乘加操作数，MAC衡量）为：
+$$\text{Computations} = c_o \times h_o \times w_o \times c_i \times k_h \times k_w$$
+其中：
+
+$c_o$ 是输出通道数
+$h_o$ 和 $w_o$ 是输出特征图的高度和宽度
+$c_i$ 是输入通道数
+$k_h$ 和 $k_w$ 是卷积核的高度和宽度
+
+代入 $k_h = k_w = 1$：
+$$\text{Computations} = c_o \times h_o \times w_o \times c_i \times 1 \times 1 = c_o \times h_o \times w_o \times c_i$$
+因此，计算复杂度简化为了 $c_o \times h_o \times w_o \times c_i$。
+
+####  当卷积窗口不是1 × 1时，如何使用矩阵乘法实现卷积？
+
+[笔记](https://vermosh.top/brainstorm-time/d2l-pytorch/chapter-6-cnn-1/)中有详细推导,此处不再赘述
