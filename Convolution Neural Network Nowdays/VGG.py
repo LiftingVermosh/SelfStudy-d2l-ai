@@ -10,13 +10,13 @@ class VGG(nn.Module):
         # 对于CIFAR-10，特征图最终尺寸为1x1，因此自适应池化为(1, 1)
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.classifier = nn.Sequential(
-            nn.Linear(512, 4096),  # 输入尺寸 512
+            nn.Linear(512, 1024),  # 输入尺寸 512
             nn.ReLU(True),
             nn.Dropout(0.5),
-            nn.Linear(4096, 4096),
+            nn.Linear(1024, 1024),
             nn.ReLU(True),
-            nn.Dropout(0.5),
-            nn.Linear(4096, num_classes),
+            nn.Dropout(0.6),
+            nn.Linear(1024, num_classes),
         )
         if init_weights:
             self._initialize_weights()
