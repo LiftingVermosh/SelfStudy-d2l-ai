@@ -1,8 +1,14 @@
+import os
+import sys
 import torch
 import torch.nn as nn
-import torch.optim as optim
+import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from utils.training_visualizer import TrainingVisualizer
 
 class NiNBlock(nn.Module):
     """ NiN 块 """
@@ -53,99 +59,83 @@ class NiN(nn.Module):
         return x
 
 
-def train(model, device, train_loader, optimizer, criterion, epoch):
-    """ 训练函数 """
+def train(model, device, train_loader, optimizer, epoch, visualizer=None):
     model.train()
-    running_loss = 0.0
+    total_loss = 0
     correct = 0
     total = 0
-
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
-
         output = model(data)
-        loss = criterion(output, target)
-
+        loss = F.cross_entropy(output, target)
         loss.backward()
         optimizer.step()
-
-        running_loss += loss.item() * data.size(0)
-        _, predicted = output.max(1)
+        
+        total_loss += loss.item() * data.size(0)  # 累加损失
+        pred = output.argmax(dim=1, keepdim=True)
+        correct += pred.eq(target.view_as(pred)).sum().item()
         total += target.size(0)
-        correct += predicted.eq(target).sum().item()
-
+        
         if batch_idx % 100 == 0:
-            print(f"Train Epoch: {epoch} [{batch_idx*len(data)}/{len(train_loader.dataset)}"
-                  f" ({100. * batch_idx/len(train_loader):.0f}%)]\tLoss: {loss.item():.4f}")
-
-    avg_loss = running_loss / len(train_loader.dataset)
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss.item()))
+    
+    avg_loss = total_loss / total
     acc = 100. * correct / total
-    print(f"Train Epoch {epoch} Summary: Loss={avg_loss:.4f} Acc={acc:.2f}%")
+    if visualizer is not None:
+        visualizer.update_train(epoch, avg_loss, acc)
+    print(f'Train Epoch {epoch}: Average Loss: {avg_loss:.4f}, Accuracy: {acc:.2f}%')
+    return avg_loss, acc
 
-def test(model, device, test_loader, criterion):
-    """ 测试函数 """
+def test(model, device, test_loader, visualizer=None, epoch=None):
     model.eval()
-    test_loss, correct = 0, 0
-
+    test_loss = 0
+    correct = 0
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += criterion(output, target).item() * data.size(0)
-
+            test_loss += F.cross_entropy(output, target, reduction='sum').item()
             pred = output.argmax(dim=1, keepdim=True)
             correct += pred.eq(target.view_as(pred)).sum().item()
-
     test_loss /= len(test_loader.dataset)
     acc = 100. * correct / len(test_loader.dataset)
-    print(f"\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({acc:.2f}%)\n")
-    return acc
+    if visualizer is not None and epoch is not None:
+        visualizer.update_test(epoch, test_loss, acc)
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        test_loss, correct, len(test_loader.dataset), acc))
+    return test_loss, acc
 
 
 if __name__ == '__main__':
-    # 数据增强+归一化
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.4914,0.4822,0.4465],
-                             std=[0.2023,0.1994,0.2010])
-    ])
-
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.4914,0.4822,0.4465],
-                             std=[0.2023,0.1994,0.2010])
-    ])
-
-    # 数据集
-    train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
-    test_dataset  = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
-
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=2)
-    test_loader  = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
-
-    # 设备
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # 模型 & 损失 & 优化器 & 学习率调度
+    # 设置设备
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = NiN().to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
-    # 训练
-    epochs = 150
-    best_acc = 0
-    for epoch in range(1, epochs+1):
-        train(model, device, train_loader, optimizer, criterion, epoch)
-        acc = test(model, device, test_loader, criterion)
-        scheduler.step()
+    # 加载 CIFAR-10 数据集
+    train_loader = DataLoader(datasets.CIFAR10('data', train=True, download=True, transform=transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.4914,0.4822,0.4465],
+                             std=[0.2023,0.1994,0.2010])
+    ])), batch_size=128, shuffle=True)
+    test_loader = DataLoader(datasets.CIFAR10('data', train=False, transform=transforms.Compose([    
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.4914,0.4822,0.4465],
+                             std=[0.2023,0.1994,0.2010])
+    ])), batch_size=128, shuffle=False)
 
-        if acc > best_acc:
-            best_acc = acc
-            torch.save(model.state_dict(), "nin_best.pth")
-            print(f"Best model saved at epoch {epoch} with Acc={acc:.2f}%")
-
-    print(f"Training finished. Best Test Acc: {best_acc:.2f}%")
+    # 创建 TrainingVisualizer 实例
+    visualizer = TrainingVisualizer()
+    
+    # 训练循环
+    for epoch in range(1, 21):
+        train_loss, train_acc = train(model, device, train_loader, optimizer, epoch, visualizer)
+        test_loss, test_acc = test(model, device, test_loader, visualizer, epoch)
+    
+    # 绘制训练曲线
+    target_path = 'Models_Output'
+    os.makedirs(target_path, exist_ok=True)
+    visualizer.plot(os.path.join(target_path, 'NiN-CIFAR10.png'))
