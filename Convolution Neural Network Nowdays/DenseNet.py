@@ -10,10 +10,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.training_visualizer import TrainingVisualizer  
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 class _DenseLayer(nn.Module):
     """ 单个 Dense 层 """
     def __init__(self, num_input_features, growth_rate):
